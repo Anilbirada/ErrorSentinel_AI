@@ -1,0 +1,11 @@
+.env
+*.json.token
+token.json
+credentials.json
+__pycache__/
+.pytest_cache/
+data/app.db*
+downloads/
+reports/
+logs/
+demo_workspace/

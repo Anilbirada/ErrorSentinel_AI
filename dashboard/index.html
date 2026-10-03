@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RSR ErrorSentinel AI — Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="logo-badge">ES</div>
+                <div>
+                    <h1 class="brand-name">ErrorSentinel</h1>
+                    <span class="brand-tagline">Intelligence & Alerting</span>
+                </div>
+            </div>
+
+            <nav class="nav-menu">
+                <a href="#overview" class="nav-item active">📊 Overview</a>
+                <a href="#live-agent" class="nav-item">⚡ Agent Monitor</a>
+                <a href="#errors-section" class="nav-item">⚠️ Error Registry</a>
+                <a href="#runs-section" class="nav-item">📋 Execution History</a>
+                <a href="#metrics-section" class="nav-item">📈 Performance</a>
+            </nav>
+
+            <div class="sidebar-status-card">
+                <div class="status-indicator-wrapper">
+                    <span id="agent-pulse" class="pulse-dot idle"></span>
+                    <span id="agent-state-text" class="status-label">Agent Idle</span>
+                </div>
+                <div class="provider-badge" id="provider-badge-text">Provider: Gmail</div>
+                <button id="btn-run-now" class="btn-action" onclick="triggerRunNow()">
+                    <span id="btn-icon">⚡</span> Run Monitoring Now
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="top-header">
+                <div>
+                    <h2 class="page-title">Operational Intelligence Dashboard</h2>
+                    <p class="page-subtitle">RSR ErrorSentinel AI — Detect. Understand. Verify. Alert.</p>
+                </div>
+                <div class="header-actions">
+                    <span class="live-clock" id="live-clock">--:--:-- UTC</span>
+                    <button class="btn-secondary" onclick="refreshAllData()">🔄 Refresh</button>
+                </div>
+            </header>
+
+            <!-- 1. Key Metrics & Overview Cards -->
+            <section id="overview" class="section-container">
+                <div class="metrics-grid">
+                    <div class="metric-card card-primary">
+                        <div class="metric-icon">📧</div>
+                        <div class="metric-info">
+                            <span class="metric-label">Emails Processed</span>
+                            <span class="metric-value" id="stat-emails">0</span>
+                        </div>
+                    </div>
+                    <div class="metric-card card-danger">
+                        <div class="metric-icon">🚨</div>
+                        <div class="metric-info">
+                            <span class="metric-label">New Error Codes</span>
+                            <span class="metric-value" id="stat-new-codes">0</span>
+                        </div>
+                    </div>
+                    <div class="metric-card card-warning">
+                        <div class="metric-icon">🛡️</div>
+                        <div class="metric-info">
+                            <span class="metric-label">Total Registered Codes</span>
+                            <span class="metric-value" id="stat-registered">0</span>
+                        </div>
+                    </div>
+                    <div class="metric-card card-success">
+                        <div class="metric-icon">📨</div>
+                        <div class="metric-info">
+                            <span class="metric-label">Alerts Delivered</span>
+                            <span class="metric-value" id="stat-alerts">0</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 2. Agent Status, Last Run & Live Progress -->
+            <section id="live-agent" class="section-container">
+                <div class="grid-2-col">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <h3>⚡ Live Execution & Agent State</h3>
+                            <span class="badge" id="live-badge">Standby</span>
+                        </div>
+                        <div class="panel-body">
+                            <div class="status-row">
+                                <span class="label">Current Status:</span>
+                                <strong id="agent-detail-status">IDLE</strong>
+                            </div>
+                            <div class="status-row">
+                                <span class="label">Last Monitored Run:</span>
+                                <span id="last-run-id" class="code-badge">None</span>
+                            </div>
+                            <div class="status-row">
+                                <span class="label">Last Run Completed:</span>
+                                <span id="last-run-time">-</span>
+                            </div>
+                            <div class="status-row">
+                                <span class="label">Transaction Rule Status:</span>
+                                <span id="transaction-rule-badge" class="badge-success">Guaranteed (Alert → Commit)</span>
+                            </div>
+
+                            <div class="progress-box">
+                                <div class="progress-title">Activity Log Stream:</div>
+                                <div class="log-stream" id="log-stream">
+                                    <div class="log-line info">[SYS] Sentinel Agent Initialized. Ready for monitoring cycles.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="panel">
+                        <div class="panel-header">
+                            <h3>⚙️ System & Provider Status</h3>
+                            <span class="badge-blue" id="provider-pill">Gmail Provider</span>
+                        </div>
+                        <div class="panel-body">
+                            <div class="status-row">
+                                <span class="label">Active Provider:</span>
+                                <strong id="cfg-provider">Gmail API (OAuth2)</strong>
+                            </div>
+                            <div class="status-row">
+                                <span class="label">AI Enrichment:</span>
+                                <span id="cfg-ai">Hybrid LLM (Structured JSON)</span>
+                            </div>
+                            <div class="status-row">
+                                <span class="label">Next Scheduled Run:</span>
+                                <span id="next-run-time">In ~30 mins</span>
+                            </div>
+                            <div class="status-row">
+                                <span class="label">Worker Concurrency:</span>
+                                <span>5 Email / 5 Attachment / 3 LLM</span>
+                            </div>
+                            <div class="status-row">
+                                <span class="label">Database:</span>
+                                <span class="code-badge">SQLite (ACID Enforced)</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 3. Errors Table (New vs Existing) -->
+            <section id="errors-section" class="section-container">
+                <div class="panel">
+                    <div class="panel-header">
+                        <div class="header-with-tabs">
+                            <h3>⚠️ Extracted Error Signatures</h3>
+                            <div class="filter-tabs">
+                                <button class="tab-btn active" onclick="filterErrors('all')">All Errors</button>
+                                <button class="tab-btn" onclick="filterErrors('new')">New Only</button>
+                                <button class="tab-btn" onclick="filterErrors('existing')">Existing / Known</button>
+                            </div>
+                        </div>
+                        <input type="text" id="error-search" class="search-input" placeholder="Search error code or message..." oninput="renderErrorsTable()">
+                    </div>
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Error Code</th>
+                                    <th>Status</th>
+                                    <th>Severity</th>
+                                    <th>Occurrences</th>
+                                    <th>Message</th>
+                                    <th>Context Sample</th>
+                                    <th>Source / Email</th>
+                                    <th>Discovered At</th>
+                                </tr>
+                            </thead>
+                            <tbody id="errors-tbody">
+                                <tr><td colspan="8" class="text-center">Loading error registry...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 4. Execution History Table -->
+            <section id="runs-section" class="section-container">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3>📋 Monitoring Runs History</h3>
+                        <span class="sub-text">Audit trail of all monitoring executions</span>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Run ID</th>
+                                    <th>Status</th>
+                                    <th>Emails Scanned</th>
+                                    <th>Processed</th>
+                                    <th>Attachments</th>
+                                    <th>New Errors</th>
+                                    <th>Notification</th>
+                                    <th>Registry</th>
+                                    <th>Duration</th>
+                                    <th>Started At</th>
+                                </tr>
+                            </thead>
+                            <tbody id="runs-tbody">
+                                <tr><td colspan="10" class="text-center">Loading run logs...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 5. Performance Metrics & Latency Breakdown -->
+            <section id="metrics-section" class="section-container">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3>📈 Performance Telemetry & Latency Breakdown</h3>
+                    </div>
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <span class="metric-label">Avg Run Duration</span>
+                            <span class="metric-value" id="metric-avg-dur">-- ms</span>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Total Emails Scanned</span>
+                            <span class="metric-value" id="metric-tot-scanned">0</span>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Attachments Extracted</span>
+                            <span class="metric-value" id="metric-tot-att">0</span>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Registered Signatures</span>
+                            <span class="metric-value" id="metric-reg-count">0</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
