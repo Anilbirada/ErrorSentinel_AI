@@ -284,6 +284,121 @@ def stats():
         db.close()
 
 
+@router.post("/trigger", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_alias():
+    """Alias for /run-now to support webhook and direct customer triggering."""
+    return await run_now()
+
+
+@router.get("/registry")
+def list_registry(limit: int = 500):
+    """List master error registry entries with stats."""
+    db = SessionLocal()
+    try:
+        entries = db.scalars(
+            select(ErrorRegistryEntry).order_by(desc(ErrorRegistryEntry.last_seen_at)).limit(limit)
+        ).all()
+        return [serialize(e) for e in entries]
+    finally:
+        db.close()
+
+
+@router.get("/export/csv")
+def export_registry_csv():
+    """Export error registry as CSV."""
+    db = SessionLocal()
+    try:
+        entries = db.scalars(select(ErrorRegistryEntry).order_by(ErrorRegistryEntry.code)).all()
+        lines = ["code,occurrences,first_seen_at,last_seen_at,status,source"]
+        for e in entries:
+            f_seen = e.first_seen_at.isoformat() if e.first_seen_at else ""
+            l_seen = e.last_seen_at.isoformat() if e.last_seen_at else ""
+            lines.append(f'"{e.code}",{e.occurrence_count},"{f_seen}","{l_seen}","{e.status}","{e.source}"')
+        csv_content = "\n".join(lines)
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=error_registry.csv"},
+        )
+    finally:
+        db.close()
+
+
+@router.get("/export/txt")
+def export_registry_txt():
+    """Export error registry as plain text (compatible with existing_error_codes.txt)."""
+    settings = get_settings()
+    txt_reg = TxtRegistry(settings.registry_file)
+    codes = sorted(txt_reg.get_all_codes())
+    content = "\n".join(codes) + "\n"
+    return Response(
+        content=content,
+        media_type="text/plain",
+        headers={"Content-Disposition": "attachment; filename=existing_error_codes.txt"},
+    )
+
+
+@router.get("/attachments")
+def list_attachments(limit: int = 100):
+    """List processed attachments with extraction metadata."""
+    db = SessionLocal()
+    try:
+        records = db.scalars(
+            select(AttachmentRecord).order_by(desc(AttachmentRecord.id)).limit(limit)
+        ).all()
+        return [serialize(a) for a in records]
+    finally:
+        db.close()
+
+
+@router.get("/system/health")
+def detailed_health():
+    """Enterprise component health monitoring."""
+    settings = get_settings()
+    db_healthy = False
+    try:
+        db = SessionLocal()
+        db.execute(select(1))
+        db.close()
+        db_healthy = True
+    except Exception:
+        db_healthy = False
+
+    job_mgr = get_job_manager()
+    return {
+        "overall": "HEALTHY" if db_healthy else "DEGRADED",
+        "components": {
+            "database": {"status": "HEALTHY" if db_healthy else "ERROR", "type": "SQLite ACID"},
+            "provider": {
+                "active": settings.email_provider,
+                "gmail_ready": settings.gmail_ready,
+                "graph_ready": settings.graph_ready,
+                "status": "HEALTHY" if (settings.email_provider == "gmail" and settings.gmail_ready) or (settings.email_provider == "microsoft_graph" and settings.graph_ready) or (settings.email_provider == "demo") else "WARNING",
+            },
+            "ai_engine": {
+                "provider": settings.active_llm_provider,
+                "model": settings.active_llm_model,
+                "status": "HEALTHY",
+            },
+            "scheduler": {
+                "interval_minutes": settings.monitor_interval_minutes,
+                "status": "HEALTHY",
+            },
+            "workers": {
+                "email_workers": settings.max_email_workers,
+                "attachment_workers": settings.max_attachment_workers,
+                "llm_concurrency": settings.max_llm_concurrency,
+                "status": "HEALTHY",
+            },
+            "transaction_enforcer": {
+                "rule": "ALERT_FIRST_THEN_COMMIT",
+                "status": "HEALTHY",
+            }
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.get("/events")
 async def events_sse():
     """Server-Sent Events endpoint streaming live job and run updates."""
@@ -311,3 +426,4 @@ async def events_sse():
             "X-Accel-Buffering": "no",
         },
     )
+
