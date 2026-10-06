@@ -320,12 +320,22 @@ class MonitoringService:
         self,
         settings: Optional[Settings] = None,
         provider: Optional[EmailProvider] = None,
+        tenant_id: Optional[str] = None,
+        gmail_connection_id: Optional[str] = None,
+        alert_recipient: Optional[str] = None,
     ):
         self.settings = settings or get_settings()
         self.provider = provider or get_email_provider(settings=self.settings)
+        self.tenant_id = tenant_id
+        self.gmail_connection_id = gmail_connection_id
         self.job_manager = get_job_manager()
         self.downloader = AttachmentDownloader(self.settings)
-        self.notification_service = NotificationService(self.settings)
+        self.notification_service = NotificationService(
+            self.settings,
+            tenant_id=tenant_id,
+            connection_id=gmail_connection_id,
+            recipients_override=[alert_recipient] if alert_recipient else None,
+        )
 
     def execute_monitoring_cycle(
         self,
@@ -353,18 +363,43 @@ class MonitoringService:
                 id=run_id,
                 status="RUNNING",
                 started_at=run_model.started_at,
+                tenant_id=self.tenant_id,
+                gmail_connection_id=self.gmail_connection_id,
             )
             db.add(db_run)
             db.commit()
 
-            state_mgr = StateManager(db)
-            registry_repo = RegistryRepository(db)
+            def ensure_connection_active() -> None:
+                if not self.gmail_connection_id:
+                    return
+                from app.database.models import GmailConnection
+
+                status = db.scalar(
+                    select(GmailConnection.status).where(
+                        GmailConnection.id == self.gmail_connection_id
+                    )
+                )
+                if status != "CONNECTED":
+                    raise RuntimeError("Gmail connection is no longer active")
+
+            state_mgr = StateManager(
+                db,
+                tenant_id=self.tenant_id,
+                connection_id=self.gmail_connection_id,
+            )
+            registry_repo = RegistryRepository(db, connection_id=self.gmail_connection_id)
             txt_reg = TxtRegistry(self.settings.registry_file)
 
             try:
+                ensure_connection_active()
                 # 1. SCAN EMAILS
                 logger.info(f"Starting Monitoring Run {run_id} via provider '{active_provider.provider_name}'...")
-                job_scan = self.job_manager.create_job(run_id, JobType.EMAIL_SCAN)
+                job_scan = self.job_manager.create_job(
+                    run_id,
+                    JobType.EMAIL_SCAN,
+                    tenant_id=self.tenant_id,
+                    gmail_connection_id=self.gmail_connection_id,
+                )
                 self.job_manager.update_job_status(job_scan.job_id, JobStatus.RUNNING)
 
                 t0 = time.perf_counter()
@@ -379,6 +414,7 @@ class MonitoringService:
                 llm = get_llm_provider(self.settings)
 
                 for msg in messages:
+                    ensure_connection_active()
                     if state_mgr.is_message_processed(msg.message_id):
                         logger.debug(f"Skipping already processed message {msg.message_id}")
                         continue
@@ -406,8 +442,14 @@ class MonitoringService:
                             metrics.attachment_download_ms += (time.perf_counter() - t_att) * 1000
 
                             att_record = AttachmentRecord(
-                                id=att.attachment_id or f"{msg.message_id}_{run_model.attachments_processed}",
-                                message_id=msg.message_id,
+                                id=(
+                                    f"{self.gmail_connection_id}:{att.attachment_id}"
+                                    if self.gmail_connection_id
+                                    else att.attachment_id or f"{msg.message_id}_{run_model.attachments_processed}"
+                                ),
+                                message_id=state_mgr._message_id(msg.message_id),
+                                tenant_id=self.tenant_id,
+                                gmail_connection_id=self.gmail_connection_id,
                                 filename=att.filename,
                                 mime_type=att.mime_type,
                                 size=att.size,
@@ -487,6 +529,8 @@ class MonitoringService:
                 for err in deduped_errors:
                     db_err = ExtractedError(
                         run_id=run_id,
+                        tenant_id=self.tenant_id,
+                        gmail_connection_id=self.gmail_connection_id,
                         raw_code=err.raw_code,
                         code=err.normalized_code,
                         message=err.message,
@@ -529,6 +573,7 @@ class MonitoringService:
                 # 7. NOTIFICATION & MANDATORY TRANSACTION COMMIT
                 t_notif = time.perf_counter()
                 if new_errors:
+                    ensure_connection_active()
                     alert_sent, msg_info = self.notification_service.dispatch_alert_and_commit(
                         provider=active_provider,
                         db_session=db,
@@ -562,27 +607,77 @@ class MonitoringService:
                 db_run.notification_status = run_model.notification_status
                 db_run.registry_status = run_model.registry_status
                 db_run.error_message = run_model.error_message
+                db_run.tenant_id = self.tenant_id
+                db_run.gmail_connection_id = self.gmail_connection_id
                 db.commit()
 
                 state_mgr.record_run_completion(run_id, is_success=(run_model.status == JobStatus.SUCCESS))
+                if self.gmail_connection_id:
+                    from app.database.models import GmailConnection
+
+                    connection = db.get(GmailConnection, self.gmail_connection_id)
+                    if connection:
+                        connection.last_sync_at = run_model.completed_at
+                        connection.updated_at = run_model.completed_at
+                        if connection.status != "DISCONNECTED":
+                            if getattr(active_provider, "auth_error", None) == "REAUTHORIZATION_REQUIRED":
+                                connection.status = "REAUTHORIZATION_REQUIRED"
+                                connection.last_error = "Your Gmail connection needs to be reauthorized."
+                            elif run_model.status == JobStatus.SUCCESS:
+                                connection.status = "CONNECTED"
+                                connection.last_error = None
+                                connection.last_successful_monitor_at = run_model.completed_at
+                            else:
+                                connection.status = "CONNECTED"
+                                connection.last_error = "Monitoring temporarily failed. The system will retry."
+                        db.commit()
                 return run_model
 
             except Exception as e:
                 db.rollback()
                 metrics.total_run_ms = (time.perf_counter() - start_total) * 1000
                 run_model.status = JobStatus.FAILED
-                run_model.error_message = str(e)
+                is_reauthorization = (
+                getattr(active_provider, "auth_error", None)
+                == "REAUTHORIZATION_REQUIRED"
+                )
+                run_model.error_message = (
+                "Your Gmail connection needs to be reauthorized."
+                if is_reauthorization
+                else "Monitoring temporarily failed. The system will retry."
+                if self.gmail_connection_id
+                else str(e)
+                )
                 run_model.duration_ms = metrics.total_run_ms
                 run_model.completed_at = datetime.now(timezone.utc)
 
                 db_run = db.get(MonitoringRun, run_id)
                 if db_run:
                     db_run.status = "FAILED"
-                    db_run.error_message = str(e)
+                    db_run.error_message = run_model.error_message
                     db_run.completed_at = run_model.completed_at
                     db.commit()
 
-                logger.error(f"Monitoring run {run_id} failed: {str(e)}", exc_info=True)
+                if self.gmail_connection_id:
+                    from app.database.models import GmailConnection
+
+                    connection = db.get(GmailConnection, self.gmail_connection_id)
+                    if connection:
+                        connection.last_sync_at = run_model.completed_at
+                        connection.updated_at = run_model.completed_at
+                        if connection.status != "DISCONNECTED":
+                            connection.last_error = run_model.error_message
+                            connection.status = (
+                                "REAUTHORIZATION_REQUIRED"
+                                if is_reauthorization
+                                else "OAUTH_ERROR"
+                                if getattr(active_provider, "auth_error", None)
+                                else "CONNECTED"
+                            )
+                        db.commit()
+                    logger.error("Gmail monitoring cycle failed; details are withheld from account logs.")
+                else:
+                    logger.error(f"Monitoring run {run_id} failed: {str(e)}", exc_info=True)
                 return run_model
 
     async def run_async(self, run_id: Optional[str] = None) -> MonitoringRunModel:

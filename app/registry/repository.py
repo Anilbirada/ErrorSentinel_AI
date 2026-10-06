@@ -7,7 +7,7 @@ from typing import Optional, Set
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database.models import ErrorRegistryEntry
+from app.database.models import ErrorRegistryEntry, GmailRegistryEntry
 from app.errors.normalizer import normalize_code
 from app.logging.logger import get_logger
 from app.models.extraction import ErrorRecord
@@ -17,11 +17,19 @@ logger = get_logger("registry_repository")
 
 
 class RegistryRepository:
-    def __init__(self, session: Session):
+    def __init__(self, session: Session, connection_id: Optional[str] = None):
         self.session = session
+        self.connection_id = connection_id
 
     def codes(self) -> set[str]:
         """Return all normalized error codes currently in the registry."""
+        if self.connection_id:
+            rows = self.session.scalars(
+                select(GmailRegistryEntry.code).where(
+                    GmailRegistryEntry.connection_id == self.connection_id
+                )
+            ).all()
+            return set(rows)
         rows = self.session.scalars(select(ErrorRegistryEntry.code)).all()
         return set(rows)
 
@@ -30,6 +38,12 @@ class RegistryRepository:
         norm = normalize_code(code)
         if not norm:
             return False
+        if self.connection_id:
+            stmt = select(GmailRegistryEntry).where(
+                GmailRegistryEntry.connection_id == self.connection_id,
+                GmailRegistryEntry.code == norm,
+            )
+            return self.session.scalar(stmt) is not None
         stmt = select(ErrorRegistryEntry).where(ErrorRegistryEntry.code == norm)
         return self.session.scalar(stmt) is not None
 
@@ -42,6 +56,24 @@ class RegistryRepository:
         for code in codes:
             normalized = normalize_code(code)
             if not normalized:
+                continue
+            if self.connection_id:
+                stmt = select(GmailRegistryEntry).where(
+                    GmailRegistryEntry.connection_id == self.connection_id,
+                    GmailRegistryEntry.code == normalized,
+                )
+                existing = self.session.scalar(stmt)
+                if existing is None:
+                    self.session.add(
+                        GmailRegistryEntry(
+                            connection_id=self.connection_id,
+                            code=normalized,
+                            source_run_id=run_id,
+                        )
+                    )
+                else:
+                    existing.occurrence_count += 1
+                    existing.last_seen_at = datetime.now(timezone.utc)
                 continue
             stmt = select(ErrorRegistryEntry).where(ErrorRegistryEntry.code == normalized)
             existing = self.session.scalar(stmt)
@@ -79,6 +111,29 @@ class RegistryRepository:
             for err in errors:
                 norm = normalize_code(err.normalized_code or err.raw_code)
                 if not norm:
+                    continue
+
+                if self.connection_id:
+                    stmt = select(GmailRegistryEntry).where(
+                        GmailRegistryEntry.connection_id == self.connection_id,
+                        GmailRegistryEntry.code == norm,
+                    )
+                    existing = self.session.scalar(stmt)
+                    if existing is None:
+                        self.session.add(
+                            GmailRegistryEntry(
+                                connection_id=self.connection_id,
+                                code=norm,
+                                source_run_id=run_id,
+                                occurrence_count=err.occurrence_count or 1,
+                                first_seen_at=now_dt,
+                                last_seen_at=now_dt,
+                            )
+                        )
+                        committed_codes.append(norm)
+                    else:
+                        existing.occurrence_count += err.occurrence_count or 1
+                        existing.last_seen_at = now_dt
                     continue
 
                 stmt = select(ErrorRegistryEntry).where(ErrorRegistryEntry.code == norm)

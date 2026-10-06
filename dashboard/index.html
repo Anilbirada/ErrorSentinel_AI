@@ -52,6 +52,10 @@
                     <span class="nav-icon">📋</span>
                     <span class="nav-label">Run History</span>
                 </a>
+                <a href="#gmail-connection" class="nav-item">
+                    <span class="nav-icon">✉️</span>
+                    <span class="nav-label">Gmail Connection</span>
+                </a>
                 <a href="#health-section" class="nav-item">
                     <span class="nav-icon">🟢</span>
                     <span class="nav-label">System Health</span>
@@ -88,7 +92,9 @@
                         <span class="chip-label">Provider:</span>
                         <strong id="header-provider-name">Gmail API</strong>
                     </div>
+                    <div class="status-chip" id="signed-in-user">Google account: <strong id="current-user-email">Loading…</strong></div>
                     <div class="live-clock-badge" id="header-clock">--:--:-- UTC</div>
+                    <button class="btn-subtle" type="button" onclick="signOut()">Sign out</button>
                     <button class="btn-icon-action" title="Settings" onclick="openSettingsModal()">⚙️</button>
                     <button class="btn-icon-action" title="Refresh" onclick="refreshAllData()">🔄</button>
                 </div>
@@ -368,7 +374,30 @@
                 </div>
             </section>
 
-            <!-- 7. System Health Center -->
+            <!-- Gmail accounts are managed independently from the legacy provider selector. -->
+            <section id="gmail-connection" class="section-wrapper">
+                <div class="glass-panel">
+                    <div class="panel-header">
+                        <h3>✉️ Gmail Connections</h3>
+                    </div>
+                    <div class="gmail-connection-content">
+                        <p class="gmail-connection-intro">Connect and monitor Gmail accounts independently. Account status and activity below are loaded from the backend.</p>
+                        <div id="gmail-connections-list" class="gmail-connections-list" aria-live="polite">
+                            <p class="gmail-empty-state">Loading Gmail connections…</p>
+                        </div>
+                        <div class="gmail-actions" aria-label="Gmail connection actions">
+                            <button id="btn-connect-gmail" class="btn-primary-action" type="button" onclick="connectGmail()">
+                                <span aria-hidden="true">＋</span> Connect Gmail
+                            </button>
+                        </div>
+                        <p id="gmail-action-message" class="gmail-action-message" role="status" aria-live="polite">
+                            Connect Gmail to start monitoring that mailbox.
+                        </p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 8. System Health Center -->
             <section id="health-section" class="section-wrapper">
                 <div class="glass-panel">
                     <div class="panel-header">
@@ -503,6 +532,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=gmail-multi-account-v2"></script>
 </body>
 </html>

@@ -4,13 +4,42 @@ let rawErrors = [];
 let currentFilter = 'all';
 let searchTimeout = null;
 let eventSource = null;
+let csrfToken = '';
 
 document.addEventListener('DOMContentLoaded', () => {
     initClock();
+    initCurrentUser();
+    initGmailConnectionMessages();
     refreshAllData();
     initSSE();
     setInterval(refreshAllData, 12000); // 12s polling fallback
+    document.getElementById('gmail-connections-list')?.addEventListener('click', handleGmailConnectionAction);
 });
+
+async function initCurrentUser() {
+    try {
+        const res = await fetch('/auth/session');
+        if (!res.ok) return;
+        const data = await res.json();
+        csrfToken = data.csrf_token || '';
+        document.getElementById('current-user-email').textContent = data.email;
+    } catch (err) {
+        console.warn('Unable to load signed-in account details:', err);
+    }
+}
+
+function initGmailConnectionMessages() {
+    const result = new URLSearchParams(window.location.search).get('gmail');
+    const messages = {
+        connected: 'Gmail account connected successfully.',
+        cancelled: 'Gmail connection was cancelled.',
+        failed: 'Unable to connect Gmail. Please try again.',
+    };
+    if (messages[result]) {
+        document.getElementById('gmail-action-message').textContent = messages[result];
+        window.history.replaceState({}, document.title, `${window.location.pathname}#gmail-connection`);
+    }
+}
 
 // 1. Live UTC Clock
 function initClock() {
@@ -23,6 +52,147 @@ function initClock() {
     }
     updateClock();
     setInterval(updateClock, 1000);
+}
+
+async function fetchGmailConnections() {
+    const container = document.getElementById('gmail-connections-list');
+    if (!container) return;
+    try {
+        const res = await fetch('/api/gmail-connections');
+        if (!res.ok) {
+            throw new Error(res.status === 401 ? 'Please sign in again to view Gmail connections.' : 'Unable to load Gmail connections.');
+        }
+        const connections = await res.json();
+        if (!connections.length) {
+            container.innerHTML = '<p class="gmail-empty-state">No Gmail accounts are connected yet.</p>';
+            return;
+        }
+        container.innerHTML = connections.map(renderGmailConnection).join('');
+    } catch (err) {
+        container.innerHTML = `<p class="gmail-empty-state error">${escapeHtml(err.message)}</p>`;
+    }
+}
+
+function renderGmailConnection(connection) {
+    const labels = {
+        CONNECTED: ['Connected', 'connected'],
+        REAUTHORIZATION_REQUIRED: ['Reauthorization Required', 'reauthorization'],
+        DISCONNECTED: ['Disconnected', 'disconnected'],
+        OAUTH_ERROR: ['OAuth Error', 'error'],
+    };
+    const [statusLabel, statusClass] = labels[connection.status] || ['Connection Error', 'error'];
+    const lastSync = formatGmailDate(connection.last_sync_at);
+    const lastSuccessful = formatGmailDate(connection.last_successful_monitor_at);
+    const lastActivity = connection.monitoring === 'RUNNING' ? 'Monitoring now' : lastSync;
+    return `
+        <article class="gmail-account-card" data-connection-id="${escapeHtml(connection.id)}">
+            <div class="gmail-account-icon" aria-hidden="true">G</div>
+            <div class="gmail-account-details">
+                <strong class="gmail-account-email">${escapeHtml(connection.email)}</strong>
+                <span class="gmail-status-badge ${statusClass}"><span class="gmail-status-dot"></span>${statusLabel}</span>
+                <span class="gmail-account-note">Monitoring: ${escapeHtml(connection.monitoring)}</span>
+                ${connection.last_error ? `<span class="gmail-account-error">${escapeHtml(connection.last_error)}</span>` : ''}
+            </div>
+            <div class="gmail-account-metrics">
+                <span><small>Last sync</small><strong>${escapeHtml(lastSync)}</strong></span>
+                <span><small>Last successful scan</small><strong>${escapeHtml(lastSuccessful)}</strong></span>
+                <span><small>Emails processed</small><strong>${Number(connection.emails_processed) || 0}</strong></span>
+                <span><small>New errors</small><strong>${Number(connection.new_errors) || 0}</strong></span>
+                <span><small>Existing errors</small><strong>${Number(connection.existing_errors) || 0}</strong></span>
+                <span><small>Alerts sent</small><strong>${Number(connection.alerts_sent) || 0}</strong></span>
+                <span><small>Last activity</small><strong>${escapeHtml(lastActivity)}</strong></span>
+            </div>
+            <div class="gmail-account-actions">
+                ${connection.status === 'CONNECTED' ? `<button class="btn-subtle" type="button" data-action="run">Run now</button>` : ''}
+                <button class="btn-subtle" type="button" data-action="reconnect">Reconnect</button>
+                ${connection.status !== 'DISCONNECTED' ? `<button class="btn-subtle danger" type="button" data-action="disconnect">Disconnect</button>` : ''}
+            </div>
+        </article>`;
+}
+
+function formatGmailDate(value) {
+    if (!value) return 'Never';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? 'Unavailable' : date.toLocaleString();
+}
+
+async function handleGmailConnectionAction(event) {
+    const button = event.target instanceof Element ? event.target.closest('button[data-action]') : null;
+    if (!button) return;
+    const card = button.closest('[data-connection-id]');
+    if (!card) return;
+    const connectionId = card.dataset.connectionId;
+    const action = button.dataset.action;
+    if (action === 'disconnect') {
+        if (!window.confirm('Disconnect this Gmail account? Monitoring will stop for this account; history will be preserved.')) return;
+        await postGmailAction(`/auth/gmail/${encodeURIComponent(connectionId)}/disconnect`, 'disconnect');
+        return;
+    }
+    if (action === 'reconnect') {
+        await beginGmailOAuth(`/auth/gmail/${encodeURIComponent(connectionId)}/reconnect`);
+        return;
+    }
+    if (action === 'run') {
+        const result = await postGmailAction(`/api/gmail-connections/${encodeURIComponent(connectionId)}/run`, 'run');
+        if (result?.status === 'accepted') {
+            showGmailMessage('Monitoring started for this Gmail account.');
+        } else if (result?.status === 'already_running') {
+            showGmailMessage('Monitoring is already running for this Gmail account.');
+        }
+        return;
+    }
+}
+
+async function connectGmail() {
+    await beginGmailOAuth('/auth/gmail/start');
+}
+
+async function beginGmailOAuth(endpoint) {
+    const result = await postGmailAction(endpoint, 'oauth');
+    if (result?.authorization_url) {
+        window.location.assign(result.authorization_url);
+    }
+}
+
+async function postGmailAction(endpoint, action) {
+    try {
+        const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'X-CSRF-Token': csrfToken },
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            const detail = typeof data.detail === 'string' ? data.detail : 'Unable to complete the Gmail request.';
+            throw new Error(detail);
+        }
+        if (action === 'disconnect') {
+            showGmailMessage('Gmail disconnected. Its monitoring is stopped; history is preserved.');
+            await fetchGmailConnections();
+        }
+        return data;
+    } catch (err) {
+        showGmailMessage(err.message || 'Unable to connect Gmail. Please try again.');
+        return null;
+    }
+}
+
+function showGmailMessage(message) {
+    const element = document.getElementById('gmail-action-message');
+    if (element) element.textContent = message;
+}
+
+async function signOut() {
+    if (!window.confirm('Sign out of ErrorSentinel?')) return;
+    try {
+        const res = await fetch('/auth/logout', {
+            method: 'POST',
+            headers: { 'X-CSRF-Token': csrfToken },
+        });
+        if (res.ok) window.location.assign('/login');
+        else showGmailMessage('Unable to sign out. Please refresh and try again.');
+    } catch (err) {
+        showGmailMessage('Unable to sign out. Please refresh and try again.');
+    }
 }
 
 // 2. Server-Sent Events (SSE) Live Feed
@@ -94,7 +264,10 @@ async function triggerRunNow() {
         spin.textContent = '⏳';
         btnText.textContent = 'Enqueuing...';
 
-        const res = await fetch('/api/run-now', { method: 'POST' });
+        const res = await fetch('/api/run-now', {
+            method: 'POST',
+            headers: { 'X-CSRF-Token': csrfToken },
+        });
         const data = await res.json();
 
         if (res.status === 202 || data.status === 'accepted') {
@@ -148,6 +321,7 @@ async function refreshAllData() {
         fetchAttachments(),
         fetchHistory(),
         fetchHealth(),
+        fetchGmailConnections(),
     ]);
 }
 
@@ -446,7 +620,7 @@ async function openSettingsModal() {
             document.getElementById('set-provider').textContent = data.email_provider;
             document.getElementById('set-ai').textContent = `${data.llm_provider} (${data.llm_model})`;
             document.getElementById('set-interval').textContent = `Every ${data.monitor_interval_minutes} minutes`;
-            document.getElementById('set-db').textContent = data.database_url;
+            document.getElementById('set-db').textContent = data.database_configured ? 'Configured' : 'Not configured';
             document.getElementById('set-workers').textContent = `${data.max_email_workers} Email / ${data.max_attachment_workers} Att / ${data.max_llm_concurrency} LLM`;
         }
     } catch (e) {

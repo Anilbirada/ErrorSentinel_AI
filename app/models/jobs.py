@@ -36,6 +36,8 @@ class JobModel:
     retry_count: int = 0
     error_message: Optional[str] = None
     result: Optional[dict[str, Any]] = None
+    tenant_id: Optional[str] = None
+    gmail_connection_id: Optional[str] = None
 
 
 @dataclass

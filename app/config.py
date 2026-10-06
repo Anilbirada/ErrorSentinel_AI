@@ -4,6 +4,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from cryptography.fernet import Fernet
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -35,6 +36,13 @@ class Settings(BaseSettings):
     gmail_credentials_file: str = "credentials.json"
     gmail_token_file: str = "token.json"
     gmail_scopes: str = "https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/gmail.send"
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = ""
+    google_login_redirect_uri: str = ""
+    token_encryption_key: str = ""
+    session_secret_key: str = ""
+    gmail_max_connections: int = Field(default=10, ge=1, le=100)
 
     # Microsoft Graph Configuration (Future / Enterprise)
     ms_tenant_id: str = ""
@@ -126,6 +134,23 @@ class Settings(BaseSettings):
     @property
     def gmail_ready(self) -> bool:
         return not self.missing_gmail_settings
+
+    @property
+    def google_oauth_ready(self) -> bool:
+        required_settings_present = (
+            self.google_client_id.strip()
+            and self.google_client_secret.strip()
+            and self.google_redirect_uri.strip()
+            and self.google_login_redirect_uri.strip()
+            and len(self.session_secret_key.encode("utf-8")) >= 32
+        )
+        if not required_settings_present or not self.token_encryption_key.strip():
+            return False
+        try:
+            Fernet(self.token_encryption_key.encode("ascii"))
+        except (ValueError, UnicodeEncodeError):
+            return False
+        return True
 
     @field_validator("cors_origins")
     @classmethod

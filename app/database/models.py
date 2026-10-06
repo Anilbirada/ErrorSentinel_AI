@@ -20,6 +20,8 @@ class MonitoringRun(Base):
     __tablename__ = "monitoring_runs"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=uid)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    gmail_connection_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(30), index=True, default="PENDING")
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -41,6 +43,8 @@ class EmailRecord(Base):
     __tablename__ = "email_records"
 
     id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    gmail_connection_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     thread_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     internet_message_id: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     sender: Mapped[str] = mapped_column(String(320), default="")
@@ -63,6 +67,8 @@ class AttachmentRecord(Base):
     __tablename__ = "attachment_records"
 
     id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    gmail_connection_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     message_id: Mapped[str] = mapped_column(ForeignKey("email_records.id"), index=True)
     filename: Mapped[str] = mapped_column(Text)
     mime_type: Mapped[str] = mapped_column(String(255), default="")
@@ -79,6 +85,8 @@ class ExtractedError(Base):
     __tablename__ = "extracted_errors"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    gmail_connection_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("monitoring_runs.id"), index=True)
     raw_code: Mapped[str] = mapped_column(String(255), default="")
     code: Mapped[str] = mapped_column(String(255), index=True)  # normalized code
@@ -122,6 +130,8 @@ class AlertDelivery(Base):
     __tablename__ = "alert_deliveries"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    gmail_connection_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("monitoring_runs.id"), index=True)
     recipient: Mapped[str] = mapped_column(Text, default="")
     subject: Mapped[str] = mapped_column(Text, default="")
@@ -136,6 +146,8 @@ class JobRecord(Base):
     __tablename__ = "jobs"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    gmail_connection_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     run_id: Mapped[str] = mapped_column(String(64), index=True)
     job_type: Mapped[str] = mapped_column(String(50), index=True)
     status: Mapped[str] = mapped_column(String(30), index=True, default="PENDING")
@@ -163,3 +175,61 @@ class SystemEvent(Base):
     category: Mapped[str] = mapped_column(String(50))
     message: Mapped[str] = mapped_column(Text)
     run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+
+
+class AppUser(Base):
+    __tablename__ = "app_users"
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class GmailConnection(Base):
+    __tablename__ = "gmail_connections"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("app_users.id"), index=True)
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    encrypted_credentials: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), default="CONNECTED", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    last_sync_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_successful_monitor_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_gmail_connection_user_email", "user_id", "email", unique=True),
+    )
+
+
+class GmailOAuthState(Base):
+    __tablename__ = "gmail_oauth_states"
+
+    state_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    browser_id: Mapped[str] = mapped_column(String(64), index=True)
+    purpose: Mapped[str] = mapped_column(String(20))
+    user_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    connection_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    nonce: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class GmailRegistryEntry(Base):
+    __tablename__ = "gmail_error_registry"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("gmail_connections.id"), index=True)
+    code: Mapped[str] = mapped_column(String(255), index=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    occurrence_count: Mapped[int] = mapped_column(Integer, default=1)
+    source_run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    __table_args__ = (
+        Index("ix_gmail_registry_connection_code", "connection_id", "code", unique=True),
+    )

@@ -41,7 +41,13 @@ class JobManager:
     def is_cycle_active(self) -> bool:
         return self._is_running_cycle
 
-    def create_job(self, run_id: str, job_type: JobType) -> JobModel:
+    def create_job(
+        self,
+        run_id: str,
+        job_type: JobType,
+        tenant_id: Optional[str] = None,
+        gmail_connection_id: Optional[str] = None,
+    ) -> JobModel:
         job_id = f"job_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}"
         model = JobModel(
             job_id=job_id,
@@ -49,6 +55,8 @@ class JobManager:
             job_type=job_type,
             status=JobStatus.PENDING,
             started_at=datetime.now(timezone.utc),
+            tenant_id=tenant_id,
+            gmail_connection_id=gmail_connection_id,
         )
         self.active_jobs[job_id] = model
 
@@ -57,6 +65,8 @@ class JobManager:
             with SessionLocal() as db:
                 db_job = JobRecord(
                     id=job_id,
+                    tenant_id=tenant_id,
+                    gmail_connection_id=gmail_connection_id,
                     run_id=run_id,
                     job_type=job_type.value,
                     status=JobStatus.PENDING.value,
@@ -67,7 +77,14 @@ class JobManager:
         except Exception as e:
             logger.warning(f"Failed to persist initial job {job_id}: {str(e)}")
 
-        self.broadcast_event({"event": "job_created", "job": model.__dict__})
+        self.broadcast_event(
+            {
+                "event": "job_created",
+                "job": model.__dict__,
+                "tenant_id": tenant_id,
+                "gmail_connection_id": gmail_connection_id,
+            }
+        )
         return model
 
     def update_job_status(
@@ -106,6 +123,16 @@ class JobManager:
             "job_id": job_id,
             "status": status.value,
             "error": error_message,
+            "tenant_id": (
+                self.active_jobs[job_id].tenant_id
+                if job_id in self.active_jobs
+                else None
+            ),
+            "gmail_connection_id": (
+                self.active_jobs[job_id].gmail_connection_id
+                if job_id in self.active_jobs
+                else None
+            ),
         })
 
     def submit_task(self, fn: Callable, *args, **kwargs):

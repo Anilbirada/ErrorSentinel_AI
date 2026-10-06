@@ -18,10 +18,20 @@ logger = get_logger("gmail_provider")
 
 
 class GmailProvider(EmailProvider):
-    def __init__(self, settings: Optional[Settings] = None):
+    def __init__(
+        self,
+        settings: Optional[Settings] = None,
+        credentials: Any = None,
+        on_credentials_refreshed: Any = None,
+        strict_auth: bool = False,
+    ):
         self.settings = settings or get_settings()
         self._service = None
-        self._credentials = None
+        self._credentials = credentials
+        self._injected_credentials = credentials is not None
+        self._on_credentials_refreshed = on_credentials_refreshed
+        self.strict_auth = strict_auth
+        self.auth_error: Optional[str] = None
 
     @property
     def provider_name(self) -> str:
@@ -47,15 +57,22 @@ class GmailProvider(EmailProvider):
             if not token_file.is_absolute():
                 token_file = ROOT / token_file
 
-            creds = None
-            if token_file.exists():
+            creds = self._credentials
+            if creds is None and token_file.exists():
                 creds = Credentials.from_authorized_user_file(str(token_file), scopes)
 
             if not creds or not creds.valid:
                 if creds and creds.expired and creds.refresh_token:
                     logger.info("Refreshing expired Gmail OAuth token...")
-                    creds.refresh(Request())
+                    try:
+                        creds.refresh(Request())
+                    except Exception:
+                        self.auth_error = "REAUTHORIZATION_REQUIRED"
+                        raise
                 else:
+                    if self._injected_credentials:
+                        self.auth_error = "REAUTHORIZATION_REQUIRED"
+                        return False
                     if not cred_file.exists():
                         logger.warning(
                             f"Gmail credentials file not found at {cred_file}. "
@@ -66,18 +83,26 @@ class GmailProvider(EmailProvider):
                     flow = InstalledAppFlow.from_client_secrets_file(str(cred_file), scopes)
                     creds = flow.run_local_server(port=0)
 
-                # Save token for next run
-                token_file.parent.mkdir(parents=True, exist_ok=True)
-                with open(token_file, "w", encoding="utf-8") as token_out:
-                    token_out.write(creds.to_json())
+                if self._injected_credentials:
+                    if self._on_credentials_refreshed:
+                        self._on_credentials_refreshed(creds.to_json())
+                else:
+                    # Keep the legacy single-account CLI flow intact.
+                    token_file.parent.mkdir(parents=True, exist_ok=True)
+                    with open(token_file, "w", encoding="utf-8") as token_out:
+                        token_out.write(creds.to_json())
 
             self._credentials = creds
             self._service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+            self.auth_error = None
             logger.info("GmailProvider successfully authenticated.")
             return True
 
         except Exception as e:
-            logger.error(f"Gmail authentication failed: {str(e)}", exc_info=True)
+            if self._injected_credentials:
+                logger.error("Gmail account authentication failed; OAuth details were withheld.")
+            else:
+                logger.error(f"Gmail authentication failed: {str(e)}", exc_info=True)
             self._service = None
             return False
 
@@ -93,6 +118,8 @@ class GmailProvider(EmailProvider):
         if not self.is_authenticated():
             if not self.authenticate():
                 logger.warning("GmailProvider not authenticated. Returning empty message list.")
+                if self.strict_auth:
+                    raise ConnectionError("Gmail authorization is no longer valid")
                 return []
 
         try:
@@ -120,6 +147,10 @@ class GmailProvider(EmailProvider):
             return messages
 
         except Exception as e:
+            if self.strict_auth:
+                self._mark_auth_error(e)
+                logger.error("Failed to list Gmail messages for connected account; details were withheld.")
+                raise ConnectionError("Unable to retrieve Gmail messages") from e
             logger.error(f"Failed to list Gmail messages: {str(e)}", exc_info=True)
             return []
 
@@ -211,6 +242,10 @@ class GmailProvider(EmailProvider):
             )
 
         except Exception as e:
+            if self.strict_auth:
+                self._mark_auth_error(e)
+                logger.error("Failed to retrieve a Gmail message; details were withheld.")
+                raise ConnectionError("Unable to retrieve Gmail message") from e
             logger.error(f"Failed to fetch Gmail message {message_id}: {str(e)}", exc_info=True)
             return None
 
@@ -245,6 +280,10 @@ class GmailProvider(EmailProvider):
             return target_path
 
         except Exception as e:
+            if self.strict_auth:
+                self._mark_auth_error(e)
+                logger.error("Failed to download a Gmail attachment; details were withheld.")
+                raise ConnectionError("Unable to download Gmail attachment") from e
             logger.error(f"Failed to download Gmail attachment {attachment_id}: {str(e)}", exc_info=True)
             raise
 
@@ -304,5 +343,15 @@ class GmailProvider(EmailProvider):
                 return False
 
         except Exception as e:
-            logger.error(f"Failed to send Gmail alert: {str(e)}", exc_info=True)
+            if self.strict_auth:
+                self._mark_auth_error(e)
+                logger.error("Failed to send Gmail alert for connected account; details were withheld.")
+            else:
+                logger.error(f"Failed to send Gmail alert: {str(e)}", exc_info=True)
             return False
+
+    def _mark_auth_error(self, error: Exception) -> None:
+        from google.auth.exceptions import RefreshError
+
+        if isinstance(error, RefreshError):
+            self.auth_error = "REAUTHORIZATION_REQUIRED"

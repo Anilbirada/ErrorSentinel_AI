@@ -13,11 +13,26 @@ logger = get_logger("state_manager")
 
 
 class StateManager:
-    def __init__(self, session: Session):
+    def __init__(
+        self,
+        session: Session,
+        tenant_id: Optional[str] = None,
+        connection_id: Optional[str] = None,
+    ):
         self.session = session
+        self.tenant_id = tenant_id
+        self.connection_id = connection_id
+
+    def _message_id(self, message_id: str) -> str:
+        return f"{self.connection_id}:{message_id}" if self.connection_id else message_id
+
+    def _state_key(self, key: str) -> str:
+        return f"{self.connection_id}:{key}" if self.connection_id else key
 
     def get_state(self, key: str, default: Any = None) -> Any:
-        stmt = select(ProcessingStateRecord).where(ProcessingStateRecord.id == key)
+        stmt = select(ProcessingStateRecord).where(
+            ProcessingStateRecord.id == self._state_key(key)
+        )
         record = self.session.scalar(stmt)
         if not record or not record.value:
             return default
@@ -27,13 +42,14 @@ class StateManager:
             return record.value
 
     def set_state(self, key: str, value: Any):
-        stmt = select(ProcessingStateRecord).where(ProcessingStateRecord.id == key)
+        state_key = self._state_key(key)
+        stmt = select(ProcessingStateRecord).where(ProcessingStateRecord.id == state_key)
         record = self.session.scalar(stmt)
         str_val = json.dumps(value) if not isinstance(value, str) else value
         now_dt = datetime.now(timezone.utc)
 
         if not record:
-            record = ProcessingStateRecord(id=key, value=str_val, updated_at=now_dt)
+            record = ProcessingStateRecord(id=state_key, value=str_val, updated_at=now_dt)
             self.session.add(record)
         else:
             record.value = str_val
@@ -41,7 +57,8 @@ class StateManager:
         self.session.commit()
 
     def is_message_processed(self, message_id: str) -> bool:
-        stmt = select(EmailRecord).where(EmailRecord.id == message_id)
+        stored_id = self._message_id(message_id)
+        stmt = select(EmailRecord).where(EmailRecord.id == stored_id)
         row = self.session.scalar(stmt)
         return row is not None and row.processing_status in ("PROCESSED", "SUCCESS", "COMPLETED")
 
@@ -56,13 +73,16 @@ class StateManager:
         provider: str = "gmail",
         status: str = "PROCESSED",
     ):
-        stmt = select(EmailRecord).where(EmailRecord.id == message_id)
+        stored_id = self._message_id(message_id)
+        stmt = select(EmailRecord).where(EmailRecord.id == stored_id)
         row = self.session.scalar(stmt)
         now_dt = datetime.now(timezone.utc)
 
         if not row:
             row = EmailRecord(
-                id=message_id,
+                id=stored_id,
+                tenant_id=self.tenant_id,
+                gmail_connection_id=self.connection_id,
                 run_id=run_id,
                 sender=sender,
                 subject=subject,

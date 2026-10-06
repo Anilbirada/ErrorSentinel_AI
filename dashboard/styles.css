@@ -759,6 +759,173 @@ body.dark-theme {
     padding: 20px;
 }
 
+.gmail-connection-content {
+    padding: 20px;
+}
+
+.gmail-connection-intro {
+    color: var(--text-secondary);
+    font-size: 13px;
+    margin-bottom: 16px;
+}
+
+.gmail-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    width: fit-content;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.gmail-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.gmail-status-badge.connected { color: var(--accent-green); }
+.gmail-status-badge.reauthorization { color: var(--accent-amber); }
+.gmail-status-badge.disconnected,
+.gmail-status-badge.error { color: var(--accent-red); }
+
+.gmail-account-email {
+    color: var(--text-primary);
+    font-size: 14px;
+    overflow-wrap: anywhere;
+}
+
+.gmail-account-error {
+    color: var(--accent-red);
+    font-size: 11px;
+}
+
+.gmail-account-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 12px;
+    flex: 2;
+}
+
+.gmail-account-metrics span {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.gmail-account-metrics small {
+    color: var(--text-muted);
+    font-size: 10px;
+}
+
+.gmail-account-metrics strong {
+    color: var(--text-primary);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.gmail-account-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.btn-subtle.danger {
+    color: #fecaca;
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+.btn-subtle.danger:hover {
+    border-color: var(--accent-red);
+}
+
+.gmail-account-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: rgba(10, 14, 23, 0.6);
+}
+
+.gmail-connections-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.gmail-empty-state {
+    padding: 18px;
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.gmail-empty-state.error,
+.gmail-account-error {
+    color: var(--accent-red);
+}
+
+.gmail-account-icon {
+    width: 42px;
+    height: 42px;
+    flex: 0 0 42px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: #ffffff;
+    color: #4285f4;
+    font-size: 22px;
+    font-weight: 700;
+}
+
+.gmail-account-details,
+.gmail-sync-details {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.gmail-account-details {
+    min-width: 0;
+    flex: 1;
+}
+
+.gmail-account-label {
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.gmail-account-details strong,
+.gmail-sync-details strong {
+    color: var(--text-primary);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+
+.gmail-account-note {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.gmail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.gmail-action-message {
+    margin-top: 14px;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
 .health-card {
     background: rgba(10, 14, 23, 0.6);
     border: 1px solid var(--border-color);
@@ -960,5 +1127,13 @@ body.dark-theme {
         flex-direction: column;
         align-items: flex-start;
         gap: 14px;
+    }
+    .gmail-account-card {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+    .gmail-sync-details {
+        width: 100%;
+        padding-left: 56px;
     }
 }

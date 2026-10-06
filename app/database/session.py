@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Generator
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from app.config import get_settings
 
@@ -69,4 +69,33 @@ def get_db() -> Generator[Session, None, None]:
 
 def init_db():
     from app.database import models as _  # noqa: F401
-    Base.metadata.create_all(bind=get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(bind=engine)
+
+    # create_all does not add columns to databases created by earlier releases.
+    tenant_columns = {
+        "monitoring_runs": ("tenant_id", "gmail_connection_id"),
+        "email_records": ("tenant_id", "gmail_connection_id"),
+        "attachment_records": ("tenant_id", "gmail_connection_id"),
+        "extracted_errors": ("tenant_id", "gmail_connection_id"),
+        "alert_deliveries": ("tenant_id", "gmail_connection_id"),
+        "jobs": ("tenant_id", "gmail_connection_id"),
+    }
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        for table_name, columns in tenant_columns.items():
+            if not inspector.has_table(table_name):
+                continue
+            existing = {column["name"] for column in inspector.get_columns(table_name)}
+            for column_name in columns:
+                if column_name not in existing:
+                    connection.execute(
+                        text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} VARCHAR(255)")
+                    )
+            table = Base.metadata.tables[table_name]
+            for index in table.indexes:
+                if any(
+                    column.name in {"tenant_id", "gmail_connection_id"}
+                    for column in index.columns
+                ):
+                    index.create(bind=connection, checkfirst=True)

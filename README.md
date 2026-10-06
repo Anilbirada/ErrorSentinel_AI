@@ -138,6 +138,9 @@ The ErrorSentinel web dashboard provides live visibility into:
 3. **Error Registry**: Filterable table comparing NEW vs. EXISTING codes with occurrence counts.
 4. **Execution History**: Audit trail of every monitoring run with duration and delivery status.
 5. **Telemetry & Performance**: Latency metrics for fetching, extraction, AI analysis, and delivery.
+6. **Gmail Connections**: Google sign-in, multiple independently monitored Gmail accounts, per-account health and run counters, reconnect, and disconnect.
+
+Dashboard sign-in and mailbox OAuth require the Web OAuth client, callback URLs, stable session key, and token-encryption key documented in [Gmail API & OAuth Setup](docs/GMAIL_SETUP.md). The dashboard redirects to Google sign-in when no authenticated session exists. Legacy CLI OAuth remains separate.
 
 ---
 

@@ -5,9 +5,10 @@ from pathlib import Path
 from typing import Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from app.config import Settings, get_settings
-from app.database.models import AlertDelivery
+from app.database.models import AlertDelivery, GmailConnection
 from app.logging.logger import get_logger
 from app.models.extraction import ErrorRecord
 from app.models.jobs import MonitoringRunModel
@@ -18,8 +19,17 @@ logger = get_logger("notification_service")
 
 
 class NotificationService:
-    def __init__(self, settings: Optional[Settings] = None):
+    def __init__(
+        self,
+        settings: Optional[Settings] = None,
+        tenant_id: Optional[str] = None,
+        connection_id: Optional[str] = None,
+        recipients_override: Optional[list[str]] = None,
+    ):
         self.settings = settings or get_settings()
+        self.tenant_id = tenant_id
+        self.connection_id = connection_id
+        self.recipients_override = recipients_override
 
     def dispatch_alert_and_commit(
         self,
@@ -47,7 +57,18 @@ class NotificationService:
             logger.info(f"No new errors in run {run.run_id}; skipping notification.")
             return True, "No new errors; alert skipped"
 
-        recipients = recipients_override or self.settings.recipients
+        if self.connection_id:
+            connection_status = db_session.scalar(
+                select(GmailConnection.status).where(
+                    GmailConnection.id == self.connection_id
+                )
+            )
+            if connection_status != "CONNECTED":
+                run.notification_status = "FAILED"
+                run.registry_status = "UNCHANGED"
+                return False, "Gmail connection is no longer active"
+
+        recipients = recipients_override or self.recipients_override or self.settings.recipients
         if not recipients:
             # Fallback for demo or test mailbox
             recipients = [self.settings.monitor_mailbox or "ops@rsr.internal"]
@@ -95,6 +116,8 @@ class NotificationService:
         # Audit delivery attempt in database
         audit_record = AlertDelivery(
             run_id=run.run_id,
+            tenant_id=self.tenant_id,
+            gmail_connection_id=self.connection_id,
             recipient=", ".join(recipients),
             subject=subject,
             status="SUCCESS" if delivery_success else "FAILED",
@@ -107,8 +130,21 @@ class NotificationService:
 
         # MANDATORY TRANSACTION ENFORCEMENT
         if delivery_success:
+            if self.connection_id:
+                connection_status = db_session.scalar(
+                    select(GmailConnection.status).where(
+                        GmailConnection.id == self.connection_id
+                    )
+                )
+                if connection_status != "CONNECTED":
+                    run.notification_status = "SENT"
+                    run.registry_status = "UNCHANGED"
+                    return False, "Gmail connection disconnected before registry commit"
             logger.info(f"Alert delivered successfully for run {run.run_id}. Proceeding to registry commit.")
-            registry_repo = RegistryRepository(db_session)
+            registry_repo = RegistryRepository(
+                db_session,
+                connection_id=self.connection_id,
+            )
             committed = registry_repo.commit_new_errors(
                 errors=new_errors,
                 run_id=run.run_id,
