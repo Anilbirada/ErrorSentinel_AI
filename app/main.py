@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 import secrets
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -112,7 +112,7 @@ def get_dashboard():
 
 
 @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
-def login_page(request):
+def login_page(request: Request):
     if request.session.get("user_id"):
         return RedirectResponse("/", status_code=303)
     auth_status = request.query_params.get("auth")
